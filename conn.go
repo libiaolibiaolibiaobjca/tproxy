@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"sync"
@@ -67,8 +68,8 @@ func (c *PairedConnection) handleClientMessage() {
 
 	r, w := io.Pipe()
 	tee := io.MultiWriter(c.svrConn, w)
-	go protocol.CreateInterop(settings.Protocol).Dump(r, protocol.ClientSide, c.id, settings.Quiet)
-	c.copyDataWithRateLimit(tee, c.cliConn, protocol.ClientSide, settings.UpLimit)
+	go protocol.CreateInterop(s.Protocol).Dump(r, protocol.ClientSide, c.id, s.Quiet)
+	c.copyDataWithRateLimit(tee, c.cliConn, protocol.ClientSide, s.UpLimit)
 }
 
 func (c *PairedConnection) handleServerMessage() {
@@ -76,15 +77,15 @@ func (c *PairedConnection) handleServerMessage() {
 	defer c.stop()
 
 	r, w := io.Pipe()
-	tee := io.MultiWriter(newDelayedWriter(c.cliConn, settings.Delay, c.stopChan), w)
-	go protocol.CreateInterop(settings.Protocol).Dump(r, protocol.ServerSide, c.id, settings.Quiet)
-	c.copyDataWithRateLimit(tee, c.svrConn, protocol.ServerSide, settings.DownLimit)
+	tee := io.MultiWriter(newDelayedWriter(c.cliConn, s.Delay, c.stopChan), w)
+	go protocol.CreateInterop(s.Protocol).Dump(r, protocol.ServerSide, c.id, s.Quiet)
+	c.copyDataWithRateLimit(tee, c.svrConn, protocol.ServerSide, s.DownLimit)
 }
 
-func (c *PairedConnection) process() {
+func (c *PairedConnection) process(remote string) {
 	defer c.stop()
 
-	conn, err := net.Dial("tcp", settings.Remote)
+	conn, err := net.Dial("tcp", remote)
 	if err != nil {
 		display.PrintlnWithTime(color.HiRedString("[x][%d] Couldn't connect to server: %v", c.id, err))
 		return
@@ -118,10 +119,17 @@ func (c *PairedConnection) stop() {
 func startListener() error {
 	stat = NewStater(NewConnCounter(), NewStatPrinter(statInterval))
 	go stat.Start()
+	for k, v := range s.Mapping {
+		go startOne(k, v)
+	}
+	select {}
 
-	conn, err := net.Listen("tcp", fmt.Sprintf("%s:%d", settings.LocalHost, settings.LocalPort))
+}
+
+func startOne(port uint32, remote string) {
+	conn, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.LocalHost, port))
 	if err != nil {
-		return fmt.Errorf("failed to start listener: %w", err)
+		log.Panic(fmt.Errorf("failed to start listener: %w", err))
 	}
 	defer conn.Close()
 
@@ -131,7 +139,7 @@ func startListener() error {
 	for {
 		cliConn, err := conn.Accept()
 		if err != nil {
-			return fmt.Errorf("server: accept: %w", err)
+			fmt.Printf("%+remote", fmt.Errorf("server: accept: %w", err))
 		}
 
 		connIndex++
@@ -139,6 +147,6 @@ func startListener() error {
 			connIndex, cliConn.RemoteAddr()))
 
 		pconn := NewPairedConnection(connIndex, cliConn)
-		go pconn.process()
+		go pconn.process(remote)
 	}
 }

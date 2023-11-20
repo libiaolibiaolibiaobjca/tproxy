@@ -20,7 +20,7 @@ type StatPrinter struct {
 }
 
 func NewStatPrinter(duration time.Duration) Stater {
-	if !settings.Stat {
+	if !s.Stat {
 		return NilPrinter{}
 	}
 
